@@ -69,6 +69,16 @@ jobs:
           echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=${SDK_ROOT}/ndk/${{ inputs.ndk_version }}" >> "$GITHUB_ENV"
 
+      - name: Verify NDK toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "NDK root: ${ANDROID_NDK_ROOT}"
+          test -d "${ANDROID_NDK_ROOT}"
+          echo "Available LLVM host directories:"
+          find "${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d -print
+          find "${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt" -mindepth 3 -maxdepth 3 -name clang -type f -print | head -20
+
       - name: Ensure build scripts are executable
         run: chmod +x scripts/*.sh
 

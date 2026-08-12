@@ -25,13 +25,36 @@ fi
 [[ -d "${ANDROID_NDK_ROOT:-}" ]] || die "ANDROID_NDK_ROOT does not point to an installed NDK"
 
 case "$(uname -s)" in
-  Darwin) HOST_TAG="darwin-arm64"; [[ "$(uname -m)" == "x86_64" ]] && HOST_TAG="darwin-x86_64" ;;
-  Linux) HOST_TAG="linux-x86_64" ;;
-  *) die "Android build is supported on macOS and Linux" ;;
+  Darwin)
+    # NDK host directory names have changed across releases/host images.
+    # Do not assume the runner architecture maps 1:1 to the NDK package layout.
+    TOOLCHAIN_ROOT="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt"
+    TOOLCHAIN_BIN=""
+    for candidate in darwin-arm64 darwin-x86_64; do
+      if [[ -d "${TOOLCHAIN_ROOT}/${candidate}/bin" ]]; then
+        TOOLCHAIN_BIN="${TOOLCHAIN_ROOT}/${candidate}/bin"
+        HOST_TAG="${candidate}"
+        break
+      fi
+    done
+    ;;
+  Linux)
+    TOOLCHAIN_ROOT="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt"
+    TOOLCHAIN_BIN=""
+    for candidate in linux-x86_64 linux-arm64; do
+      if [[ -d "${TOOLCHAIN_ROOT}/${candidate}/bin" ]]; then
+        TOOLCHAIN_BIN="${TOOLCHAIN_ROOT}/${candidate}/bin"
+        HOST_TAG="${candidate}"
+        break
+      fi
+    done
+    ;;
+  *)
+    die "Android build is supported on macOS and Linux"
+    ;;
 esac
 
-TOOLCHAIN_BIN="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/${HOST_TAG}/bin"
-[[ -d "$TOOLCHAIN_BIN" ]] || die "NDK LLVM toolchain not found: $TOOLCHAIN_BIN"
+[[ -n "$TOOLCHAIN_BIN" ]] || die "NDK LLVM toolchain not found under ${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt. Available host directories: $(find "${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | paste -sd ' ' - || true)"
 export PATH="${TOOLCHAIN_BIN}:${PATH}"
 
 require_cmd curl
