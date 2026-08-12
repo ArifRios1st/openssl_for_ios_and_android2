@@ -194,6 +194,149 @@ for i in "${!abis[@]}"; do
   build_one "${abis[$i]}" "${archs[$i]}" "${targets[$i]}" "${openssl_targets[$i]}"
 done
 
+cat >"${OUT_DIR}/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.18)
+
+# Prebuilt Android OpenSSL/nghttp2/cURL package.
+# Usage from an Android CMake project:
+#   add_subdirectory(/path/to/android-package ${CMAKE_BINARY_DIR}/openssl_android)
+#   target_link_libraries(app PRIVATE openssl_android::curl)
+
+if(NOT ANDROID)
+  message(FATAL_ERROR "This package is intended for an Android CMake build")
+endif()
+
+set(_PACKAGE_ROOT "${CMAKE_CURRENT_LIST_DIR}")
+set(_ABI "${ANDROID_ABI}")
+if(NOT _ABI)
+  message(FATAL_ERROR "ANDROID_ABI is required")
+endif()
+
+set(_LIB_DIR "${_PACKAGE_ROOT}/${_ABI}/lib")
+set(_INC_DIR "${_PACKAGE_ROOT}/${_ABI}/include")
+if(NOT EXISTS "${_LIB_DIR}")
+  message(FATAL_ERROR "Unsupported Android ABI: ${_ABI}")
+endif()
+
+foreach(_lib IN ITEMS crypto ssl nghttp2 curl)
+  if(NOT EXISTS "${_LIB_DIR}/lib${_lib}.a")
+    message(FATAL_ERROR "Missing prebuilt library: ${_LIB_DIR}/lib${_lib}.a")
+  endif()
+endforeach()
+
+function(_openssl_android_import name file)
+  if(NOT TARGET ${name})
+    add_library(${name} STATIC IMPORTED GLOBAL)
+    set_target_properties(${name} PROPERTIES
+      IMPORTED_LOCATION "${_LIB_DIR}/lib${file}.a"
+      INTERFACE_INCLUDE_DIRECTORIES "${_INC_DIR}"
+    )
+  endif()
+endfunction()
+
+_openssl_android_import(openssl_android::crypto crypto)
+_openssl_android_import(openssl_android::ssl ssl)
+_openssl_android_import(openssl_android::nghttp2 nghttp2)
+_openssl_android_import(openssl_android::curl curl)
+
+# Compatibility aliases commonly used by consumers.
+if(NOT TARGET OpenSSL::Crypto)
+  add_library(OpenSSL::Crypto ALIAS openssl_android::crypto)
+endif()
+if(NOT TARGET OpenSSL::SSL)
+  add_library(OpenSSL::SSL ALIAS openssl_android::ssl)
+endif()
+
+set_target_properties(openssl_android::ssl PROPERTIES
+  INTERFACE_LINK_LIBRARIES "openssl_android::crypto;\$<LINK_ONLY:dl>;\$<LINK_ONLY:log>"
+)
+set_target_properties(openssl_android::nghttp2 PROPERTIES
+  INTERFACE_LINK_LIBRARIES "\$<LINK_ONLY:dl>"
+)
+set_target_properties(openssl_android::curl PROPERTIES
+  INTERFACE_LINK_LIBRARIES "openssl_android::ssl;openssl_android::crypto;openssl_android::nghttp2;\$<LINK_ONLY:dl>;\$<LINK_ONLY:log>"
+)
+
+add_library(openssl_android::all INTERFACE IMPORTED GLOBAL)
+set_target_properties(openssl_android::all PROPERTIES
+  INTERFACE_LINK_LIBRARIES "openssl_android::curl;openssl_android::nghttp2;openssl_android::ssl;openssl_android::crypto"
+)
+CMAKE
+
+cat >"${OUT_DIR}/Android.mk" <<'ANDROIDMK'
+# Prebuilt Android OpenSSL/nghttp2/cURL package.
+# Usage from your app's Android.mk: include /path/to/package/Android.mk
+# Then link with: LOCAL_STATIC_LIBRARIES += curl_static
+
+LOCAL_PATH := $(call my-dir)
+OPENSSL_ANDROID_ROOT := $(LOCAL_PATH)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := crypto_static
+LOCAL_SRC_FILES := $(TARGET_ARCH_ABI)/lib/libcrypto.a
+LOCAL_EXPORT_C_INCLUDES := $(OPENSSL_ANDROID_ROOT)/$(TARGET_ARCH_ABI)/include
+include $(PREBUILT_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := ssl_static
+LOCAL_SRC_FILES := $(TARGET_ARCH_ABI)/lib/libssl.a
+LOCAL_EXPORT_C_INCLUDES := $(OPENSSL_ANDROID_ROOT)/$(TARGET_ARCH_ABI)/include
+LOCAL_STATIC_LIBRARIES := crypto_static
+include $(PREBUILT_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := nghttp2_static
+LOCAL_SRC_FILES := $(TARGET_ARCH_ABI)/lib/libnghttp2.a
+LOCAL_EXPORT_C_INCLUDES := $(OPENSSL_ANDROID_ROOT)/$(TARGET_ARCH_ABI)/include
+include $(PREBUILT_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := curl_static
+LOCAL_SRC_FILES := $(TARGET_ARCH_ABI)/lib/libcurl.a
+LOCAL_EXPORT_C_INCLUDES := $(OPENSSL_ANDROID_ROOT)/$(TARGET_ARCH_ABI)/include
+LOCAL_STATIC_LIBRARIES := ssl_static crypto_static nghttp2_static
+include $(PREBUILT_STATIC_LIBRARY)
+ANDROIDMK
+
+cat >"${OUT_DIR}/ANDROID-IMPORT.md" <<'ANDROIDDOC'
+# Android prebuilt import
+
+This package contains static libraries for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
+
+## CMake
+
+Add the package as a subdirectory and link the aggregate target:
+
+```cmake
+add_subdirectory(path/to/openssl-for-android ${CMAKE_BINARY_DIR}/openssl-for-android)
+target_link_libraries(my_app PRIVATE openssl_android::all)
+```
+
+Or link cURL explicitly:
+
+```cmake
+target_link_libraries(my_app PRIVATE openssl_android::curl)
+```
+
+The package selects `${ANDROID_ABI}` automatically.
+
+## Android.mk
+
+Include the package's `Android.mk` from your application's `Android.mk`:
+
+```make
+include $(LOCAL_PATH)/../openssl-for-android/Android.mk
+```
+
+Then link the prebuilt modules:
+
+```make
+LOCAL_STATIC_LIBRARIES += curl_static ssl_static crypto_static nghttp2_static
+```
+
+The headers are exported from `$(TARGET_ARCH_ABI)/include`.
+ANDROIDDOC
+
 cat >"${OUT_DIR}/BUILD-INFO.txt" <<INFO
 OpenSSL: ${OPENSSL_VERSION}
 nghttp2: ${NGHTTP2_VERSION}
@@ -201,6 +344,7 @@ cURL: ${CURL_VERSION}
 Android API: ${API}
 Android NDK: ${NDK_VERSION}
 ABIs: ${abis[*]}
+Package includes: CMakeLists.txt, Android.mk
 INFO
 
 ARCHIVE="${DIST_DIR}/openssl-for-android-api-${API}-ndk-${NDK_VERSION}.zip"

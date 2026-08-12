@@ -17,6 +17,7 @@ Clean rebuild of the old `openssl_for_ios_and_android` project. The old project 
 - The workflow uploads **only the final ZIP package**, avoiding the previous ZIP-inside-ZIP artifact layout.
 - A successful run automatically creates a GitHub Release with a generated title and a release table containing library, version, platform support, and architecture support. The old `pull commit` column is intentionally omitted.
 - Android output contains `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
+- Android release ZIP includes `CMakeLists.txt` and `Android.mk` for direct integration of the prebuilt static libraries.
 - iOS output contains arm64 device and arm64 simulator XCFramework slices.
 
 ## CI
@@ -49,6 +50,57 @@ The release body uses this format:
 | cURL | 8.21.0 | Android | armeabi-v7a, arm64-v8a, x86, x86_64 |
 
 For iOS releases, the platform column shows the configured minimum iOS version and the architecture column shows arm64 device/simulator.
+
+## Android integration
+
+Every Android release ZIP contains:
+
+```text
+CMakeLists.txt
+Android.mk
+ANDROID-IMPORT.md
+armeabi-v7a/{include,lib}/
+arm64-v8a/{include,lib}/
+x86/{include,lib}/
+x86_64/{include,lib}/
+```
+
+### CMake
+
+Add the extracted package as a subdirectory. The package automatically selects the library directory matching `ANDROID_ABI`:
+
+```cmake
+add_subdirectory(
+    /path/to/openssl-for-android
+    ${CMAKE_BINARY_DIR}/openssl-for-android
+)
+
+target_link_libraries(my_app PRIVATE openssl_android::all)
+```
+
+For cURL only:
+
+```cmake
+target_link_libraries(my_app PRIVATE openssl_android::curl)
+```
+
+The package also exposes `OpenSSL::Crypto` and `OpenSSL::SSL` compatibility aliases.
+
+### Android.mk
+
+Include the package `Android.mk` from your application's `Android.mk`:
+
+```make
+include $(LOCAL_PATH)/../openssl-for-android/Android.mk
+```
+
+Then add the required static modules:
+
+```make
+LOCAL_STATIC_LIBRARIES += curl_static ssl_static crypto_static nghttp2_static
+```
+
+The package exports the ABI-specific headers automatically.
 
 ## Local Android build
 
