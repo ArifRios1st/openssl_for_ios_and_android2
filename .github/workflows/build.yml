@@ -6,7 +6,7 @@ on:
       target:
         description: Build target
         required: true
-        default: android
+        default: both
         type: choice
         options:
           - android
@@ -44,7 +44,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   android:
@@ -73,14 +73,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "NDK root: ${ANDROID_NDK_ROOT}"
-          test -d "${ANDROID_NDK_ROOT}"
-          echo "Available LLVM host directories:"
-          find "${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt" -mindepth 1 -maxdepth 1 -type d -print
-          find "${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt" -mindepth 3 -maxdepth 3 -name clang -type f -print | head -20
-
-      - name: Ensure build scripts are executable
-        run: chmod +x scripts/*.sh
+          echo "NDK root: $ANDROID_NDK_ROOT"
+          find "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt" -maxdepth 1 -mindepth 1 -type d -print
 
       - name: Build Android
         env:
@@ -89,15 +83,16 @@ jobs:
           OPENSSL_VERSION: ${{ inputs.openssl_version }}
           NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
           CURL_VERSION: ${{ inputs.curl_version }}
+        shell: bash
         run: bash ./scripts/build-android.sh "$ANDROID_API" "$ANDROID_NDK_VERSION"
 
-      - name: Upload Android artifacts
+      # Keep the artifact as one ZIP only. The previous workflow uploaded both
+      # dist/android/** and the ZIP, which caused a ZIP containing another ZIP.
+      - name: Upload Android package
         uses: actions/upload-artifact@v4
         with:
           name: android-api-${{ inputs.android_api }}-ndk-${{ inputs.ndk_version }}
-          path: |
-            dist/android/**
-            dist/openssl-for-android-api-*.zip
+          path: dist/openssl-for-android-api-${{ inputs.android_api }}-ndk-${{ inputs.ndk_version }}.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -115,23 +110,120 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-path
           xcrun --sdk iphonesimulator --show-sdk-path
 
-      - name: Ensure build scripts are executable
-        run: chmod +x scripts/*.sh
-
       - name: Build iOS
         env:
           OPENSSL_VERSION: ${{ inputs.openssl_version }}
           NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
           CURL_VERSION: ${{ inputs.curl_version }}
           MIN_IOS_VERSION: ${{ inputs.ios_min_version }}
+        shell: bash
         run: bash ./scripts/build-ios.sh
 
-      - name: Upload iOS artifacts
+      - name: Upload iOS package
         uses: actions/upload-artifact@v4
         with:
           name: ios-${{ inputs.ios_min_version }}
-          path: |
-            dist/ios/**
-            dist/openssl-for-ios-*.zip
+          path: dist/openssl-for-ios-${{ inputs.openssl_version }}.zip
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    if: >-
+      always() &&
+      (needs.android.result == 'success' || needs.android.result == 'skipped') &&
+      (needs.ios.result == 'success' || needs.ios.result == 'skipped')
+    needs: [android, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Android package
+        if: inputs.target == 'android' || inputs.target == 'both'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-api-${{ inputs.android_api }}-ndk-${{ inputs.ndk_version }}
+          path: release-assets
+
+      - name: Download iOS package
+        if: inputs.target == 'ios' || inputs.target == 'both'
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-${{ inputs.ios_min_version }}
+          path: release-assets
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target }}
+          OPENSSL_VERSION: ${{ inputs.openssl_version }}
+          NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
+          CURL_VERSION: ${{ inputs.curl_version }}
+          ANDROID_API: ${{ inputs.android_api }}
+          NDK_VERSION: ${{ inputs.ndk_version }}
+          IOS_MIN_VERSION: ${{ inputs.ios_min_version }}
+          RUN_NUMBER: ${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$TARGET" in
+            android)
+              TITLE="[Only Android] OpenSSL-${OPENSSL_VERSION}, nghttp2-${NGHTTP2_VERSION} and cURL-${CURL_VERSION}"
+              TAG="openssl-${OPENSSL_VERSION}-nghttp2-${NGHTTP2_VERSION}-curl-${CURL_VERSION}-android-api-${ANDROID_API}-ndk-${NDK_VERSION}-run-${RUN_NUMBER}"
+              ;;
+            ios)
+              TITLE="[Only iOS] OpenSSL-${OPENSSL_VERSION}, nghttp2-${NGHTTP2_VERSION} and cURL-${CURL_VERSION}"
+              TAG="openssl-${OPENSSL_VERSION}-nghttp2-${NGHTTP2_VERSION}-curl-${CURL_VERSION}-ios-${IOS_MIN_VERSION}-run-${RUN_NUMBER}"
+              ;;
+            both)
+              TITLE="[Android + iOS] OpenSSL-${OPENSSL_VERSION}, nghttp2-${NGHTTP2_VERSION} and cURL-${CURL_VERSION}"
+              TAG="openssl-${OPENSSL_VERSION}-nghttp2-${NGHTTP2_VERSION}-curl-${CURL_VERSION}-android-api-${ANDROID_API}-ndk-${NDK_VERSION}-ios-${IOS_MIN_VERSION}-run-${RUN_NUMBER}"
+              ;;
+            *)
+              echo "Unsupported target: $TARGET" >&2
+              exit 1
+              ;;
+          esac
+
+          BODY_FILE="release-body.md"
+          {
+            echo "## Build information"
+            echo
+            echo "| library | version | platform support | arch support |"
+            echo "|---|---|---|---|"
+            if [[ "$TARGET" == "android" || "$TARGET" == "both" ]]; then
+              echo "| OpenSSL | ${OPENSSL_VERSION} | Android | armeabi-v7a, arm64-v8a, x86, x86_64 |"
+              echo "| nghttp2 | ${NGHTTP2_VERSION} | Android | armeabi-v7a, arm64-v8a, x86, x86_64 |"
+              echo "| cURL | ${CURL_VERSION} | Android | armeabi-v7a, arm64-v8a, x86, x86_64 |"
+            fi
+            if [[ "$TARGET" == "ios" || "$TARGET" == "both" ]]; then
+              echo "| OpenSSL | ${OPENSSL_VERSION} | iOS ${IOS_MIN_VERSION}+ | arm64 device, arm64 simulator |"
+              echo "| nghttp2 | ${NGHTTP2_VERSION} | iOS ${IOS_MIN_VERSION}+ | arm64 device, arm64 simulator |"
+              echo "| cURL | ${CURL_VERSION} | iOS ${IOS_MIN_VERSION}+ | arm64 device, arm64 simulator |"
+            fi
+            echo
+            if [[ "$TARGET" == "android" || "$TARGET" == "both" ]]; then
+              echo "**Android API:** ${ANDROID_API}"
+              echo
+              echo "**Android NDK:** ${NDK_VERSION}"
+              echo
+            fi
+            if [[ "$TARGET" == "ios" || "$TARGET" == "both" ]]; then
+              echo "**Minimum iOS:** ${IOS_MIN_VERSION}"
+              echo
+            fi
+            echo "Build run: #${RUN_NUMBER}"
+          } > "$BODY_FILE"
+
+          echo "Release title: $TITLE"
+          echo "Release tag: $TAG"
+          cat "$BODY_FILE"
+          find release-assets -type f -maxdepth 2 -print
+
+          gh release create "$TAG" release-assets/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TITLE" \
+            --notes-file "$BODY_FILE" \
+            --latest
