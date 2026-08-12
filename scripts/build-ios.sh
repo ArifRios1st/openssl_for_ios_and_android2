@@ -16,6 +16,8 @@ require_cmd make
 require_cmd perl
 require_cmd curl
 require_cmd zip
+require_cmd xcodebuild
+require_cmd lipo
 
 DOWNLOAD_DIR="${BUILD_DIR}/downloads"
 SRC_DIR="${BUILD_DIR}/src/ios"
@@ -36,6 +38,15 @@ build_ios_arch() {
   sdk_path="$(xcrun --sdk "$sdk" --show-sdk-path)"
   local target_triple
   target_triple="$(xcrun --sdk "$sdk" --find clang)"
+  local target_host
+  local platform_target
+  if [[ "$sdk" == "iphoneos" ]]; then
+    target_host="aarch64-ios-darwin"
+    platform_target="arm64-apple-ios${MIN_IOS_VERSION}"
+  else
+    target_host="aarch64-ios-darwin"
+    platform_target="arm64-apple-ios${MIN_IOS_VERSION}-simulator"
+  fi
   local slice_root="${BUILD_DIR}/prefix/ios/${slice}"
   local openssl_prefix="${slice_root}/openssl"
   local nghttp2_prefix="${slice_root}/nghttp2"
@@ -49,10 +60,10 @@ build_ios_arch() {
   export SDKROOT="$sdk_path"
   export CC="$target_triple"
   export CXX="$(xcrun --sdk "$sdk" --find clang++)"
-  export CFLAGS="-arch ${arch} -isysroot ${sdk_path} -miphoneos-version-min=${MIN_IOS_VERSION} -fPIC -O2"
+  export CFLAGS="-arch ${arch} -target ${platform_target} -isysroot ${sdk_path} -miphoneos-version-min=${MIN_IOS_VERSION} -fPIC -O2"
   export CXXFLAGS="$CFLAGS"
   export CPPFLAGS=""
-  export LDFLAGS="-arch ${arch} -isysroot ${sdk_path} -miphoneos-version-min=${MIN_IOS_VERSION}"
+  export LDFLAGS="-arch ${arch} -target ${platform_target} -isysroot ${sdk_path} -miphoneos-version-min=${MIN_IOS_VERSION}"
 
   log "[${slice}] OpenSSL ${OPENSSL_VERSION}"
   local openssl_src="${SRC_DIR}/openssl-${slice}"
@@ -76,7 +87,7 @@ build_ios_arch() {
   extract_tarball "$NGHTTP2_ARCHIVE" "$nghttp2_src"
   pushd "$nghttp2_src" >/dev/null
   ./configure \
-    --host="aarch64-ios-darwin" \
+    --host="${target_host}" \
     --prefix="$nghttp2_prefix" \
     --libdir="$nghttp2_prefix/lib" \
     --disable-shared --enable-static --disable-app --disable-threads \
@@ -92,7 +103,7 @@ build_ios_arch() {
   export CPPFLAGS="-I${openssl_prefix}/include -I${nghttp2_prefix}/include"
   export LDFLAGS="-arch ${arch} -isysroot ${sdk_path} -miphoneos-version-min=${MIN_IOS_VERSION} -L${openssl_prefix}/lib -L${nghttp2_prefix}/lib"
   ./configure \
-    --host="aarch64-ios-darwin" \
+    --host="${target_host}" \
     --prefix="$curl_prefix" --libdir="$curl_prefix/lib" \
     --disable-shared --enable-static \
     --with-openssl="$openssl_prefix" --with-nghttp2="$nghttp2_prefix" \
@@ -113,12 +124,31 @@ make_xcframework() {
   local output_name="$1" prefix_name="$2" libname="$3"
   local device_prefix="${BUILD_DIR}/prefix/ios/device-arm64/${prefix_name}"
   local simulator_prefix="${BUILD_DIR}/prefix/ios/simulator-arm64/${prefix_name}"
+  local device_lib="${device_prefix}/lib/${libname}"
+  local simulator_lib="${simulator_prefix}/lib/${libname}"
   local framework="${OUT_DIR}/${output_name}.xcframework"
+  local log_file="${BUILD_DIR}/logs/ios/xcframework-${output_name}.log"
+
+  [[ -f "$device_lib" ]] || die "Missing iOS device library: $device_lib"
+  [[ -f "$simulator_lib" ]] || die "Missing iOS simulator library: $simulator_lib"
+  [[ -d "${device_prefix}/include" ]] || die "Missing iOS device headers: ${device_prefix}/include"
+  [[ -d "${simulator_prefix}/include" ]] || die "Missing iOS simulator headers: ${simulator_prefix}/include"
+
+  log "${output_name}: device library"
+  lipo -info "$device_lib"
+  log "${output_name}: simulator library"
+  lipo -info "$simulator_lib"
+
   rm -rf "$framework"
-  xcodebuild -create-xcframework \
-    -library "${device_prefix}/lib/${libname}" -headers "${device_prefix}/include" \
-    -library "${simulator_prefix}/lib/${libname}" -headers "${simulator_prefix}/include" \
-    -output "$framework"
+  if ! xcodebuild -create-xcframework \
+    -library "$device_lib" -headers "${device_prefix}/include" \
+    -library "$simulator_lib" -headers "${simulator_prefix}/include" \
+    -output "$framework" >"$log_file" 2>&1; then
+    cat "$log_file" >&2
+    die "Failed to create ${output_name}.xcframework"
+  fi
+
+  [[ -d "$framework" ]] || die "XCFramework was not created: $framework"
 }
 
 make_xcframework OpenSSL openssl libssl.a

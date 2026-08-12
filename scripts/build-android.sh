@@ -25,14 +25,29 @@ fi
 [[ -d "${ANDROID_NDK_ROOT:-}" ]] || die "ANDROID_NDK_ROOT does not point to an installed NDK"
 
 case "$(uname -s)" in
-  Darwin) HOST_TAG="darwin-arm64"; [[ "$(uname -m)" == "x86_64" ]] && HOST_TAG="darwin-x86_64" ;;
-  Linux) HOST_TAG="linux-x86_64" ;;
-  *) die "Android build is supported on macOS and Linux" ;;
+  Darwin)
+    candidates=("darwin-arm64" "darwin-x86_64")
+    ;;
+  Linux)
+    candidates=("linux-x86_64" "linux-arm64")
+    ;;
+  *)
+    die "Android build is supported on macOS and Linux"
+    ;;
 esac
 
+HOST_TAG=""
+for candidate in "${candidates[@]}"; do
+  if [[ -d "${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/${candidate}/bin" ]]; then
+    HOST_TAG="$candidate"
+    break
+  fi
+done
+
+[[ -n "$HOST_TAG" ]] || die "NDK LLVM toolchain not found. Available hosts: $(find "${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ')"
 TOOLCHAIN_BIN="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/${HOST_TAG}/bin"
-[[ -d "$TOOLCHAIN_BIN" ]] || die "NDK LLVM toolchain not found: $TOOLCHAIN_BIN"
 export PATH="${TOOLCHAIN_BIN}:${PATH}"
+log "Using NDK host toolchain: ${HOST_TAG}"
 
 require_cmd curl
 require_cmd tar

@@ -74,7 +74,11 @@ jobs:
         run: |
           set -euo pipefail
           echo "NDK root: $ANDROID_NDK_ROOT"
+          echo "Runner architecture: $(uname -m)"
+          echo "Available NDK LLVM hosts:"
           find "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt" -maxdepth 1 -mindepth 1 -type d -print
+          echo "Available clang binaries:"
+          find "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt" -path '*/bin/clang' -print
 
       - name: Build Android
         env:
