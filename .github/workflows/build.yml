@@ -58,6 +58,7 @@ jobs:
       - name: Resolve component versions
         id: resolve
         env:
+          GH_TOKEN: ${{ github.token }}
           OPENSSL_REQUESTED: ${{ inputs.openssl_version }}
           NGHTTP2_REQUESTED: ${{ inputs.nghttp2_version }}
           CURL_REQUESTED: ${{ inputs.curl_version }}
@@ -153,6 +154,7 @@ jobs:
           retention-days: 14
 
   ios:
+    needs: resolve-versions
     if: inputs.target == 'ios' || inputs.target == 'both'
     runs-on: macos-14
     timeout-minutes: 90
@@ -179,7 +181,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-${{ inputs.ios_min_version }}
-          path: dist/openssl-for-ios-${{ inputs.openssl_version }}.zip
+          path: dist/openssl-for-ios-${{ needs.resolve-versions.outputs.openssl }}.zip
           if-no-files-found: error
           retention-days: 14
 
