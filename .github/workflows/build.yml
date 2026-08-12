@@ -69,6 +69,9 @@ jobs:
           echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=${SDK_ROOT}/ndk/${{ inputs.ndk_version }}" >> "$GITHUB_ENV"
 
+      - name: Ensure build scripts are executable
+        run: chmod +x scripts/*.sh
+
       - name: Build Android
         env:
           ANDROID_API: ${{ inputs.android_api }}
@@ -76,7 +79,7 @@ jobs:
           OPENSSL_VERSION: ${{ inputs.openssl_version }}
           NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
           CURL_VERSION: ${{ inputs.curl_version }}
-        run: ./scripts/build-android.sh "$ANDROID_API" "$ANDROID_NDK_VERSION"
+        run: bash ./scripts/build-android.sh "$ANDROID_API" "$ANDROID_NDK_VERSION"
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
@@ -102,13 +105,16 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-path
           xcrun --sdk iphonesimulator --show-sdk-path
 
+      - name: Ensure build scripts are executable
+        run: chmod +x scripts/*.sh
+
       - name: Build iOS
         env:
           OPENSSL_VERSION: ${{ inputs.openssl_version }}
           NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
           CURL_VERSION: ${{ inputs.curl_version }}
           MIN_IOS_VERSION: ${{ inputs.ios_min_version }}
-        run: ./scripts/build-ios.sh
+        run: bash ./scripts/build-ios.sh
 
       - name: Upload iOS artifacts
         uses: actions/upload-artifact@v4
