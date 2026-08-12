@@ -1,0 +1,121 @@
+name: Build Libraries
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Build target
+        required: true
+        default: android
+        type: choice
+        options:
+          - android
+          - ios
+          - both
+      android_api:
+        description: Android API level
+        required: true
+        default: "23"
+        type: string
+      ndk_version:
+        description: Android side-by-side NDK version (for example 27.2.12479018)
+        required: true
+        default: 27.2.12479018
+        type: string
+      openssl_version:
+        description: OpenSSL version
+        required: true
+        default: 4.0.1
+        type: string
+      nghttp2_version:
+        description: nghttp2 version
+        required: true
+        default: 1.70.0
+        type: string
+      curl_version:
+        description: cURL version
+        required: true
+        default: 8.21.0
+        type: string
+      ios_min_version:
+        description: Minimum iOS version
+        required: true
+        default: "13.0"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    if: inputs.target == 'android' || inputs.target == 'both'
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install requested NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$SDK_ROOT"
+          sdkmanager "ndk;${{ inputs.ndk_version }}"
+          test -d "${SDK_ROOT}/ndk/${{ inputs.ndk_version }}"
+          echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${SDK_ROOT}/ndk/${{ inputs.ndk_version }}" >> "$GITHUB_ENV"
+
+      - name: Build Android
+        env:
+          ANDROID_API: ${{ inputs.android_api }}
+          ANDROID_NDK_VERSION: ${{ inputs.ndk_version }}
+          OPENSSL_VERSION: ${{ inputs.openssl_version }}
+          NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
+          CURL_VERSION: ${{ inputs.curl_version }}
+        run: ./scripts/build-android.sh "$ANDROID_API" "$ANDROID_NDK_VERSION"
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-api-${{ inputs.android_api }}-ndk-${{ inputs.ndk_version }}
+          path: |
+            dist/android/**
+            dist/openssl-for-android-api-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    if: inputs.target == 'ios' || inputs.target == 'both'
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Apple toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-path
+
+      - name: Build iOS
+        env:
+          OPENSSL_VERSION: ${{ inputs.openssl_version }}
+          NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
+          CURL_VERSION: ${{ inputs.curl_version }}
+          MIN_IOS_VERSION: ${{ inputs.ios_min_version }}
+        run: ./scripts/build-ios.sh
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ inputs.ios_min_version }}
+          path: |
+            dist/ios/**
+            dist/openssl-for-ios-*.zip
+          if-no-files-found: error
+          retention-days: 14
