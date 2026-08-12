@@ -23,19 +23,19 @@ on:
         default: 27.2.12479018
         type: string
       openssl_version:
-        description: OpenSSL version
+        description: OpenSSL version (`latest` or an exact release version)
         required: true
-        default: 4.0.1
+        default: latest
         type: string
       nghttp2_version:
-        description: nghttp2 version
+        description: nghttp2 version (`latest` or an exact release version)
         required: true
-        default: 1.70.0
+        default: latest
         type: string
       curl_version:
-        description: cURL version
+        description: cURL version (`latest` or an exact release version)
         required: true
-        default: 8.21.0
+        default: latest
         type: string
       ios_min_version:
         description: Minimum iOS version
@@ -47,7 +47,59 @@ permissions:
   contents: write
 
 jobs:
+  resolve-versions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      openssl: ${{ steps.resolve.outputs.openssl }}
+      nghttp2: ${{ steps.resolve.outputs.nghttp2 }}
+      curl: ${{ steps.resolve.outputs.curl }}
+    steps:
+      - name: Resolve component versions
+        id: resolve
+        env:
+          OPENSSL_REQUESTED: ${{ inputs.openssl_version }}
+          NGHTTP2_REQUESTED: ${{ inputs.nghttp2_version }}
+          CURL_REQUESTED: ${{ inputs.curl_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          resolve() {
+            local component="$1"
+            local requested="$2"
+            if [[ "$requested" != "latest" ]]; then
+              printf '%s\n' "$requested"
+              return
+            fi
+
+            local repo="$3"
+            local tag
+            tag="$(gh api "repos/${repo}/releases/latest" --jq '.tag_name')"
+            case "$component" in
+              openssl) tag="${tag#openssl-}" ;;
+              nghttp2) tag="${tag#v}" ;;
+              curl) tag="${tag#curl-}"; tag="${tag//_/.}" ;;
+            esac
+            printf '%s\n' "$tag"
+          }
+
+          OPENSSL="$(resolve openssl "$OPENSSL_REQUESTED" openssl/openssl)"
+          NGHTTP2="$(resolve nghttp2 "$NGHTTP2_REQUESTED" nghttp2/nghttp2)"
+          CURL="$(resolve curl "$CURL_REQUESTED" curl/curl)"
+
+          [[ -n "$OPENSSL" && -n "$NGHTTP2" && -n "$CURL" ]]
+          echo "Resolved OpenSSL: $OPENSSL"
+          echo "Resolved nghttp2: $NGHTTP2"
+          echo "Resolved cURL: $CURL"
+          {
+            echo "openssl=$OPENSSL"
+            echo "nghttp2=$NGHTTP2"
+            echo "curl=$CURL"
+          } >> "$GITHUB_OUTPUT"
+
   android:
+    needs: resolve-versions
     if: inputs.target == 'android' || inputs.target == 'both'
     runs-on: macos-14
     timeout-minutes: 90
@@ -84,9 +136,9 @@ jobs:
         env:
           ANDROID_API: ${{ inputs.android_api }}
           ANDROID_NDK_VERSION: ${{ inputs.ndk_version }}
-          OPENSSL_VERSION: ${{ inputs.openssl_version }}
-          NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
-          CURL_VERSION: ${{ inputs.curl_version }}
+          OPENSSL_VERSION: ${{ needs.resolve-versions.outputs.openssl }}
+          NGHTTP2_VERSION: ${{ needs.resolve-versions.outputs.nghttp2 }}
+          CURL_VERSION: ${{ needs.resolve-versions.outputs.curl }}
         shell: bash
         run: bash ./scripts/build-android.sh "$ANDROID_API" "$ANDROID_NDK_VERSION"
 
@@ -116,9 +168,9 @@ jobs:
 
       - name: Build iOS
         env:
-          OPENSSL_VERSION: ${{ inputs.openssl_version }}
-          NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
-          CURL_VERSION: ${{ inputs.curl_version }}
+          OPENSSL_VERSION: ${{ needs.resolve-versions.outputs.openssl }}
+          NGHTTP2_VERSION: ${{ needs.resolve-versions.outputs.nghttp2 }}
+          CURL_VERSION: ${{ needs.resolve-versions.outputs.curl }}
           MIN_IOS_VERSION: ${{ inputs.ios_min_version }}
         shell: bash
         run: bash ./scripts/build-ios.sh
@@ -136,7 +188,7 @@ jobs:
       always() &&
       (needs.android.result == 'success' || needs.android.result == 'skipped') &&
       (needs.ios.result == 'success' || needs.ios.result == 'skipped')
-    needs: [android, ios]
+    needs: [resolve-versions, android, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -161,9 +213,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ inputs.target }}
-          OPENSSL_VERSION: ${{ inputs.openssl_version }}
-          NGHTTP2_VERSION: ${{ inputs.nghttp2_version }}
-          CURL_VERSION: ${{ inputs.curl_version }}
+          OPENSSL_VERSION: ${{ needs.resolve-versions.outputs.openssl }}
+          NGHTTP2_VERSION: ${{ needs.resolve-versions.outputs.nghttp2 }}
+          CURL_VERSION: ${{ needs.resolve-versions.outputs.curl }}
           ANDROID_API: ${{ inputs.android_api }}
           NDK_VERSION: ${{ inputs.ndk_version }}
           IOS_MIN_VERSION: ${{ inputs.ios_min_version }}
@@ -194,6 +246,8 @@ jobs:
           BODY_FILE="release-body.md"
           {
             echo "## Build information"
+            echo
+            echo "Requested versions: OpenSSL=${{ inputs.openssl_version }}, nghttp2=${{ inputs.nghttp2_version }}, cURL=${{ inputs.curl_version }}"
             echo
             echo "| library | version | platform support | arch support |"
             echo "|---|---|---|---|"

@@ -11,6 +11,10 @@ OPENSSL_VERSION="${OPENSSL_VERSION:-4.0.1}"
 NGHTTP2_VERSION="${NGHTTP2_VERSION:-1.70.0}"
 CURL_VERSION="${CURL_VERSION:-8.21.0}"
 
+OPENSSL_VERSION="$(resolve_latest_version openssl "$OPENSSL_VERSION")"
+NGHTTP2_VERSION="$(resolve_latest_version nghttp2 "$NGHTTP2_VERSION")"
+CURL_VERSION="$(resolve_latest_version curl "$CURL_VERSION")"
+
 [[ "$API" =~ ^[0-9]+$ ]] || die "Android API must be numeric"
 (( API >= 21 )) || die "Android API must be >= 21 for this build"
 

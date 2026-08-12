@@ -7,6 +7,10 @@ source "${SCRIPT_DIR}/common.sh"
 OPENSSL_VERSION="${OPENSSL_VERSION:-4.0.1}"
 NGHTTP2_VERSION="${NGHTTP2_VERSION:-1.70.0}"
 CURL_VERSION="${CURL_VERSION:-8.21.0}"
+
+OPENSSL_VERSION="$(resolve_latest_version openssl "$OPENSSL_VERSION")"
+NGHTTP2_VERSION="$(resolve_latest_version nghttp2 "$NGHTTP2_VERSION")"
+CURL_VERSION="$(resolve_latest_version curl "$CURL_VERSION")"
 MIN_IOS_VERSION="${MIN_IOS_VERSION:-13.0}"
 
 [[ "$(uname -s)" == "Darwin" ]] || die "iOS build must run on macOS"

@@ -8,7 +8,7 @@ Clean rebuild of the old `openssl_for_ios_and_android` project. The old project 
   - target (`android`, `ios`, or `both`)
   - Android API level
   - Android NDK version
-  - OpenSSL / nghttp2 / cURL versions
+  - OpenSSL / nghttp2 / cURL versions, with `latest` support
   - minimum iOS version
 - The default target is now **both**, so iOS is not silently skipped on a normal Run workflow.
 - Android uses the side-by-side NDK installed by `sdkmanager` instead of the obsolete `ndk-bundle` path.
@@ -27,7 +27,7 @@ Open **Actions → Build Libraries → Run workflow** and choose:
 - `target`: `android`, `ios`, or `both` (default: `both`)
 - `android_api`: for example `23`, `26`, `29`, `35`
 - `ndk_version`: an Android SDK side-by-side NDK package version, for example `27.2.12479018`
-- component versions as required
+- `openssl_version`, `nghttp2_version`, `curl_version`: use `latest` to resolve the current GitHub release automatically, or enter an exact version such as `4.0.1`.
 
 If `target=android`, the iOS job is intentionally shown as **Skipped**. If you want both platforms, select `both`.
 
@@ -116,3 +116,16 @@ Run on macOS with Xcode command-line tools installed:
 ```bash
 bash ./scripts/build-ios.sh
 ```
+
+## Version selection
+
+The three dependency inputs accept either an exact version or the literal `latest`. When `latest` is selected, the workflow resolves the current GitHub Releases tag before the Android/iOS jobs start. The resolved versions are then used consistently for downloading, building, packaging, and the release title/table.
+
+Examples:
+
+- `latest` → current OpenSSL/nghttp2/cURL release
+- `4.0.1` → pin OpenSSL to exactly 4.0.1
+- `1.70.0` → pin nghttp2 to exactly 1.70.0
+- `8.21.0` → pin cURL to exactly 8.21.0
+
+This avoids building one version while the GitHub Release metadata advertises another version.
